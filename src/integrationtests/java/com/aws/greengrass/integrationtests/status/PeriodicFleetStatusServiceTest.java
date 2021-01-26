@@ -89,7 +89,7 @@ class PeriodicFleetStatusServiceTest extends BaseITCase {
                     fssRunning.countDown();
                 }
                 FleetStatusService fleetStatusService = (FleetStatusService) service;
-                fleetStatusService.setPeriodicUpdateIntervalSec(10);
+                fleetStatusService.setPeriodicPublishIntervalSec(10);
                 fleetStatusService.schedulePeriodicFleetStatusDataUpdate(false);
             }
             if (service.getName().equals(DeploymentService.DEPLOYMENT_SERVICE_TOPICS)

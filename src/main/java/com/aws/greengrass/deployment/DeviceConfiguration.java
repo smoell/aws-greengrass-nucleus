@@ -72,6 +72,7 @@ public class DeviceConfiguration {
     public static final String DEVICE_PARAM_AWS_REGION = "awsRegion";
     public static final String DEVICE_MQTT_NAMESPACE = "mqtt";
     public static final String DEVICE_SPOOLER_NAMESPACE = "spooler";
+    public static final String FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC = "periodicStatusPublishIntervalSeconds";
     public static final String RUN_WITH_TOPIC = "runWithDefault";
     public static final String RUN_WITH_DEFAULT_POSIX_USER = "posixUser";
     public static final String RUN_WITH_DEFAULT_WINDOWS_USER = "windowsUser";
@@ -194,6 +195,15 @@ public class DeviceConfiguration {
      */
     public Topics getTelemetryConfigurationTopics() {
         return getTopics(TELEMETRY_CONFIG_LOGGING_TOPICS);
+    }
+
+    /**
+     * Get the telemetry configuration.
+     *
+     * @return Configuration for telemetry agent.
+     */
+    public Topic getPeriodicStatusPublishIntervalTopic() {
+        return getTopic(FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC);
     }
 
     /**

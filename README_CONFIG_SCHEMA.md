@@ -161,6 +161,7 @@ services:
       iotCredEndpoint: "xxxxxx.credentials.iot.us-east-1.amazonaws.com"
       iotDataEndpoint: "xxxxxx-ats.iot.us-east-1.amazonaws.com"
       iotRoleAlias: "tes_alias"
+      periodicStatusPublishIntervalSeconds: "86400"
       logging:
         level: INFO
         fileSizeKB: 1024

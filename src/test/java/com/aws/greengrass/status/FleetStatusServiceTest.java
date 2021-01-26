@@ -51,7 +51,6 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
-import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.deployment.DeploymentService.COMPONENTS_TO_GROUPS_TOPICS;
 import static com.aws.greengrass.deployment.DeploymentService.DEPLOYMENT_DETAILED_STATUS_KEY;
 import static com.aws.greengrass.deployment.DeploymentService.DEPLOYMENT_FAILURE_CAUSE_KEY;
@@ -61,10 +60,10 @@ import static com.aws.greengrass.deployment.DeploymentStatusKeeper.DEPLOYMENT_ST
 import static com.aws.greengrass.deployment.DeploymentStatusKeeper.DEPLOYMENT_STATUS_KEY_NAME;
 import static com.aws.greengrass.deployment.DeploymentStatusKeeper.DEPLOYMENT_TYPE_KEY_NAME;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_THING_NAME;
+import static com.aws.greengrass.deployment.DeviceConfiguration.FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC;
 import static com.aws.greengrass.deployment.model.Deployment.DeploymentType.IOT_JOBS;
-import static com.aws.greengrass.status.FleetStatusService.DEFAULT_PERIODIC_UPDATE_INTERVAL_SEC;
+import static com.aws.greengrass.status.FleetStatusService.DEFAULT_PERIODIC_PUBLISH_INTERVAL_SEC;
 import static com.aws.greengrass.status.FleetStatusService.FLEET_STATUS_LAST_PERIODIC_UPDATE_TIME_TOPIC;
-import static com.aws.greengrass.status.FleetStatusService.FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC;
 import static com.aws.greengrass.status.FleetStatusService.FLEET_STATUS_SEQUENCE_NUMBER_TOPIC;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
@@ -147,7 +146,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_component_status_change_WHEN_deployment_finishes_THEN_MQTT_Sent_with_fss_data_with_overall_healthy_state()
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -173,12 +172,12 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockDeploymentService.getConfig()).thenReturn(config);
         when(mockDeploymentService.isComponentRoot("MockService")).thenReturn(true);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
+
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to SUCCEEDED.
@@ -237,7 +236,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_component_status_changes_to_broken_WHEN_deployment_finishes_THEN_MQTT_Sent_with_fss_data_with_overall_unhealthy_state()
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -259,12 +258,11 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
 
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to IN_PROGRESS.
@@ -313,17 +311,16 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     @Test
     void GIVEN_component_status_change_WHEN_deployment_does_not_finish_THEN_No_MQTT_Sent_with_fss_data() throws InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
 
         // Set up all the mocks
         when(mockDeploymentStatusKeeper.registerDeploymentStatusConsumer(any(), consumerArgumentCaptor.capture(), anyString())).thenReturn(true);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the state of an EG service.
@@ -343,18 +340,17 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     @Test
     void GIVEN_component_status_change_WHEN_MQTT_connection_interrupted_THEN_No_MQTT_Sent_with_fss_data() throws InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
 
         // Set up all the mocks
         when(mockDeploymentStatusKeeper.registerDeploymentStatusConsumer(any(), consumerArgumentCaptor.capture(), anyString())).thenReturn(true);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
         doNothing().when(mockMqttClient).addToCallbackEvents(mqttClientConnectionEventsArgumentCaptor.capture());
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         Map<String, Object> map = new HashMap<>();
@@ -380,7 +376,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_component_status_change_WHEN_periodic_update_triggered_THEN_MQTT_Sent_with_fss_data_with_overall_healthy_state()
             throws InterruptedException, ServiceLoadException, IOException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "3");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "3");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -401,12 +397,11 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockKernel.orderedDependencies()).thenReturn(Collections.singleton(mockGreengrassService1));
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS(3);
+        fleetStatusService = createFSS(3);
         fleetStatusService.startup();
 
         TimeUnit.SECONDS.sleep(5);
@@ -433,7 +428,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_periodic_update_less_than_default_WHEN_config_read_THEN_sets_publish_interval_to_default()
             throws InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "3");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "3");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -448,22 +443,50 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         // Set up all the mocks
         when(mockDeploymentStatusKeeper.registerDeploymentStatusConsumer(any(), consumerArgumentCaptor.capture(), anyString())).thenReturn(true);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
-        assertEquals(DEFAULT_PERIODIC_UPDATE_INTERVAL_SEC, fleetStatusService.getPeriodicUpdateIntervalSec());
+        assertEquals(DEFAULT_PERIODIC_PUBLISH_INTERVAL_SEC, fleetStatusService.getPeriodicPublishIntervalSec());
+    }
+
+    @Test
+    void GIVEN_periodic_update_more_than_default_WHEN_config_read_THEN_sets_publish_interval_to_correct_value()
+            throws InterruptedException {
+        // Set up all the topics
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "90000");
+        Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
+        Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
+        Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
+        Topic groupTopic1 = Topic.of(context, "arn:aws:greengrass:testRegion:12345:configuration:testGroup:12",
+                true);
+        groupsTopics.children.put(new CaseInsensitiveString("MockService"), groupTopic1);
+        groupsTopics2.children.put(new CaseInsensitiveString("MockService2"), groupTopic1);
+        allComponentToGroupsTopics.children.put(new CaseInsensitiveString("MockService"), groupsTopics);
+        allComponentToGroupsTopics.children.put(new CaseInsensitiveString("MockService2"), groupsTopics2);
+        lenient().when(config.lookupTopics(COMPONENTS_TO_GROUPS_TOPICS)).thenReturn(allComponentToGroupsTopics);
+
+        // Set up all the mocks
+        when(mockDeploymentStatusKeeper.registerDeploymentStatusConsumer(any(), consumerArgumentCaptor.capture(), anyString())).thenReturn(true);
+        doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
+        when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
+
+        // Create the fleet status service instance
+        fleetStatusService = createFSS();
+        fleetStatusService.startup();
+
+        assertEquals(90000, fleetStatusService.getPeriodicPublishIntervalSec());
     }
 
     @Test
     void GIVEN_component_removed_WHEN_deployment_finishes_THEN_MQTT_Sent_with_fss_data_with_overall_healthy_state()
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         lenient().when(config.lookupTopics(COMPONENTS_TO_GROUPS_TOPICS)).thenReturn(allComponentToGroupsTopics);
 
@@ -476,12 +499,11 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockKernel.orderedDependencies()).thenReturn(Collections.singletonList(mockDeploymentService));
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to IN_PROGRESS.
@@ -532,7 +554,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_after_deployment_WHEN_component_status_changes_to_broken_THEN_MQTT_Sent_with_fss_data_with_overall_unhealthy_state()
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -552,12 +574,11 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
 
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the state of an EG service.
@@ -586,17 +607,16 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     @Test
     void GIVEN_during_deployment_WHEN_periodic_update_triggered_THEN_No_MQTT_Sent() throws InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "3000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "3000");
 
         // Set up all the mocks
         when(mockDeploymentStatusKeeper.registerDeploymentStatusConsumer(any(), consumerArgumentCaptor.capture(), anyString())).thenReturn(true);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to IN_PROGRESS.
@@ -615,7 +635,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_MQTT_connection_interrupted_WHEN_connection_resumes_THEN_MQTT_Sent_with_event_triggered_fss_data()
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -639,13 +659,12 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockKernel.orderedDependencies()).thenReturn(Arrays.asList(mockGreengrassService1, mockGreengrassService2));
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
         doNothing().when(mockMqttClient).addToCallbackEvents(mqttClientConnectionEventsArgumentCaptor.capture());
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to SUCCEEDED.
@@ -703,7 +722,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
     void GIVEN_MQTT_connection_interrupted_WHEN_connection_resumes_THEN_MQTT_Sent_with_periodic_triggered_fss_data()
             throws InterruptedException, ServiceLoadException, IOException {
         // Set up all the topics
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "3");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "3");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topics groupsTopics = Topics.of(context, "MockService", allComponentToGroupsTopics);
         Topics groupsTopics2 = Topics.of(context, "MockService2", allComponentToGroupsTopics);
@@ -723,13 +742,12 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockKernel.orderedDependencies()).thenReturn(Collections.singleton(mockGreengrassService1));
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
         doNothing().when(mockMqttClient).addToCallbackEvents(mqttClientConnectionEventsArgumentCaptor.capture());
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS(3);
+        fleetStatusService = createFSS(3);
         fleetStatusService.startup();
         mqttClientConnectionEventsArgumentCaptor.getValue().onConnectionInterrupted(500);
 
@@ -762,7 +780,7 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
             throws ServiceLoadException, IOException, InterruptedException {
         // Set up all the topics
         int numServices = 1500;
-        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC, "10000");
+        Topic periodicUpdateIntervalMsTopic = Topic.of(context, FLEET_STATUS_PERIODIC_PUBLISH_INTERVAL_SEC, "10000");
         Topics allComponentToGroupsTopics = Topics.of(context, GROUP_TO_ROOT_COMPONENTS_TOPICS, null);
         Topic groupTopic1 = Topic.of(context, "arn:aws:greengrass:testRegion:12345:configuration:testGroup:12",
                 true);
@@ -790,12 +808,11 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         when(mockKernel.orderedDependencies()).thenReturn(greengrassServices);
         when(mockDeploymentService.getConfig()).thenReturn(config);
         doNothing().when(context).addGlobalStateChangeListener(addGlobalStateChangeListenerArgumentCaptor.capture());
-        when(config.lookup(CONFIGURATION_CONFIG_KEY, FLEET_STATUS_PERIODIC_UPDATE_INTERVAL_SEC))
-                .thenReturn(periodicUpdateIntervalMsTopic);
+        when(mockDeviceConfiguration.getPeriodicStatusPublishIntervalTopic()).thenReturn(periodicUpdateIntervalMsTopic);
         when(context.get(ScheduledExecutorService.class)).thenReturn(ses);
 
         // Create the fleet status service instance
-        fleetStatusService = createFCS();
+        fleetStatusService = createFSS();
         fleetStatusService.startup();
 
         // Update the job status for an ongoing deployment to SUCCEEDED.
@@ -838,13 +855,13 @@ class FleetStatusServiceTest extends GGServiceTestUtil {
         assertThat(serviceNamesToCheck, is(IsEmptyCollection.empty()));
     }
 
-    private FleetStatusService createFCS() {
+    private FleetStatusService createFSS() {
         PlatformResolver platformResolver = new PlatformResolver(null);
         return new FleetStatusService(config, mockMqttClient,
                 mockDeploymentStatusKeeper, mockKernel, mockDeviceConfiguration, platformResolver);
     }
 
-    private FleetStatusService createFCS(int periodicUpdateIntervalSec) {
+    private FleetStatusService createFSS(int periodicUpdateIntervalSec) {
         PlatformResolver platformResolver = new PlatformResolver(null);
         return new FleetStatusService(config, mockMqttClient,
                 mockDeploymentStatusKeeper, mockKernel, mockDeviceConfiguration, platformResolver,
