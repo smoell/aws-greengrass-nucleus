@@ -15,6 +15,7 @@ import com.aws.greengrass.util.Coerce;
 
 import java.util.Iterator;
 import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -102,11 +103,12 @@ public class Spool {
      * If there is still no room after deleting QoS 0 PublishRequests, then an exception will be thrown.
      *
      * @param request publish request
-     * @return MessageID identifying the spooled PublishRequest
+     * @return SpoolMessage spool message
      * @throws InterruptedException result from the queue implementation
      * @throws SpoolerStoreException  if the message cannot be inserted into the message spool
      */
-    public synchronized long addMessage(PublishRequest request) throws InterruptedException, SpoolerStoreException {
+    public synchronized SpoolMessage addMessage(PublishRequest request) throws InterruptedException,
+            SpoolerStoreException {
         int messageSizeInBytes = request.getPayload().length;
         if (messageSizeInBytes > getSpoolConfig().getSpoolSizeInBytes()) {
             throw new SpoolerStoreException("Message is larger than the size of message spool.");
@@ -123,14 +125,16 @@ public class Spool {
         }
 
         long id = nextId.getAndIncrement();
-        addMessageToSpooler(id, request);
+        SpoolMessage message = SpoolMessage.builder().id(id).future(new CompletableFuture<Integer>())
+                .request(request).build();
+        addMessageToSpooler(id, message);
         queueOfMessageId.putLast(id);
 
-        return id;
+        return message;
     }
 
-    private void addMessageToSpooler(long id, PublishRequest request) {
-        spooler.add(id, request);
+    private void addMessageToSpooler(long id, SpoolMessage message) {
+        spooler.add(id, message);
     }
 
     /**
@@ -140,16 +144,16 @@ public class Spool {
      * @throws InterruptedException the thread is interrupted while popping the first id from the queue
      */
     public long popId() throws InterruptedException {
-        PublishRequest request;
+        SpoolMessage message;
         long id;
         do {
             id = queueOfMessageId.takeFirst();
-            request = getMessageById(id);
-        } while (request == null);
+            message = getMessageById(id);
+        } while (message == null);
         return id;
     }
 
-    public PublishRequest getMessageById(long messageId) {
+    public SpoolMessage getMessageById(long messageId) {
         return spooler.getMessageById(messageId);
     }
 
@@ -159,10 +163,10 @@ public class Spool {
      * @param messageId  message id
      */
     public void removeMessageById(long messageId) {
-        PublishRequest toBeRemovedRequest = getMessageById(messageId);
-        if (toBeRemovedRequest != null) {
+        SpoolMessage toBeRemovedMessage = getMessageById(messageId);
+        if (toBeRemovedMessage != null) {
             spooler.removeMessageById(messageId);
-            int messageSize = toBeRemovedRequest.getPayload().length;
+            int messageSize = toBeRemovedMessage.getRequest().getPayload().length;
             curMessageQueueSizeInBytes.getAndAdd(-1 * messageSize);
         }
     }
@@ -179,7 +183,7 @@ public class Spool {
         Iterator<Long> messageIdIterator = queueOfMessageId.iterator();
         while (messageIdIterator.hasNext() && addJudgementWithCurrentSpoolerSize(needToCheckCurSpoolerSize)) {
             long id = messageIdIterator.next();
-            PublishRequest request = getMessageById(id);
+            PublishRequest request = getMessageById(id).getRequest();
             int qos = request.getQos().getValue();
             if (qos == 0) {
                 removeMessageById(id);

@@ -24,6 +24,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SuppressWarnings("PMD.CloseResource")
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MqttTest extends BaseE2ETestCase {
     public static final int NUM_MESSAGES = 50;
     private Kernel kernel;
+    private int lastMessageId = -1;
 
     protected MqttTest() throws Exception {
         super();
@@ -59,10 +61,13 @@ class MqttTest extends BaseE2ETestCase {
         client.subscribe(SubscribeRequest.builder().topic("A/B/C").callback((m) -> {
             cdl.countDown();
             logger.atInfo().kv("remaining", cdl.getCount()).log("Received 1 message from cloud.");
+            Integer id = Integer.parseInt(new String(m.getPayload(), StandardCharsets.UTF_8));
+            assertEquals(id, ++lastMessageId);
         }).build());
 
         for (int i = 0; i < NUM_MESSAGES; i++) {
-            client.publish(PublishRequest.builder().topic("A/B/C").payload("What's up".getBytes(StandardCharsets.UTF_8))
+            String id = String.valueOf(i);
+            client.publish(PublishRequest.builder().topic("A/B/C").payload(id.getBytes(StandardCharsets.UTF_8))
                     .build()).get(5, TimeUnit.SECONDS);
             logger.atInfo().kv("total", i + 1).log("Added 1 message to spooler.");
         }

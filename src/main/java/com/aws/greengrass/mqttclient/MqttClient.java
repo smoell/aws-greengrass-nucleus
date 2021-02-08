@@ -11,6 +11,7 @@ import com.aws.greengrass.deployment.DeviceConfiguration;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.mqttclient.spool.Spool;
+import com.aws.greengrass.mqttclient.spool.SpoolMessage;
 import com.aws.greengrass.mqttclient.spool.SpoolerStoreException;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.LockScope;
@@ -32,6 +33,7 @@ import software.amazon.awssdk.crt.mqtt.MqttMessage;
 import software.amazon.awssdk.iot.AwsIotMqttConnectionBuilder;
 
 import java.io.Closeable;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +58,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
 
@@ -68,6 +71,7 @@ import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_ROO
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_THING_NAME;
 import static com.aws.greengrass.mqttclient.AwsIotMqttClient.TOPIC_KEY;
 
+@SuppressWarnings({"PMD.AvoidDuplicateLiterals"})
 public class MqttClient implements Closeable {
     private static final Logger logger = LogManager.getLogger(MqttClient.class);
     private static final String MQTT_KEEP_ALIVE_TIMEOUT_KEY = "keepAliveTimeoutMs";
@@ -83,10 +87,16 @@ public class MqttClient implements Closeable {
     static final String MQTT_OPERATION_TIMEOUT_KEY = "operationTimeoutMs";
     static final int DEFAULT_MQTT_OPERATION_TIMEOUT = (int) Duration.ofSeconds(30).toMillis();
     static final String MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY = "maxInFlightPublishes";
-    static final int DEFAULT_MAX_IN_FLIGHT_PUBLISHES = 1;
+    static final int DEFAULT_MAX_IN_FLIGHT_PUBLISHES = 5;
     public static final int MAX_SUBSCRIPTIONS_PER_CONNECTION = 50;
     public static final String CLIENT_ID_KEY = "clientId";
     public static final int EVENTLOOP_SHUTDOWN_TIMEOUT_SECONDS = 2;
+    static final int DEFAULT_PUBLISH_RETRIED_COUNTER = 100;
+    // http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718023
+    static final int MAXIMUM_SIZE_OF_MQTT_MESSAGE_SIZE = 268_435_455;
+    // https://docs.aws.amazon.com/general/latest/gr/iot-core.html#limits_iot
+    static final int DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES = 7;
+    static final int DEFAULT_MAXIMUM_LENGTH_OF_TOPIC = 256;
 
     // Use read lock for MQTT operations and write lock when changing the MQTT connection
     private final ReadWriteLock connectionLock = new ReentrantReadWriteLock(true);
@@ -109,7 +119,7 @@ public class MqttClient implements Closeable {
     private final Spool spool;
     private final ExecutorService executorService;
     private final AtomicReference<Future<?>> spoolingFuture = new AtomicReference<>();
-    private final int maxInFlightPublishes = DEFAULT_MAX_IN_FLIGHT_PUBLISHES;
+    private int maxInFlightPublishes;
 
     @Getter(AccessLevel.PROTECTED)
     private final MqttClientConnectionEvents callbacks = new MqttClientConnectionEvents() {
@@ -205,6 +215,9 @@ public class MqttClient implements Closeable {
         mqttTopics = this.deviceConfiguration.getMQTTNamespace();
         this.builderProvider = builderProvider;
 
+        maxInFlightPublishes = Coerce.toInt(
+                mqttTopics.findOrDefault(DEFAULT_MAX_IN_FLIGHT_PUBLISHES, MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY));
+
         eventLoopGroup = new EventLoopGroup(Coerce.toInt(mqttTopics.findOrDefault(1, MQTT_THREAD_POOL_SIZE_KEY)));
         hostResolver = new HostResolver(eventLoopGroup);
         clientBootstrap = new ClientBootstrap(eventLoopGroup, hostResolver);
@@ -237,6 +250,11 @@ public class MqttClient implements Closeable {
                         .childOf(DEVICE_PARAM_CERTIFICATE_FILE_PATH) || node.childOf(DEVICE_PARAM_ROOT_CA_PATH) || node
                         .childOf(DEVICE_PARAM_AWS_REGION))) {
                     return;
+                }
+
+                if (node.childOf(DEVICE_MQTT_NAMESPACE)) {
+                    maxInFlightPublishes = Coerce.toInt(mqttTopics.findOrDefault(DEFAULT_MAX_IN_FLIGHT_PUBLISHES,
+                                    MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY));
                 }
 
                 // Only reconnect when the region changed if the proxy exists
@@ -432,6 +450,16 @@ public class MqttClient implements Closeable {
             return future;
         }
 
+        try {
+            isValidPublishRequest(request);
+        } catch (SpoolerStoreException e) {
+            logger.atError().kv("topic", request.getTopic())
+                    .kv("payload size", request.getPayload().length).log("Invalid publish request: {}",
+                    e.getMessage());
+            future.completeExceptionally(e);
+            return future;
+        }
+
         boolean willDropTheRequest = !mqttOnline.get() && request.getQos().getValue() == 0 && !spool.getSpoolConfig()
                 .isKeepQos0WhenOffline();
 
@@ -442,15 +470,58 @@ public class MqttClient implements Closeable {
             return future;
         }
 
+        SpoolMessage spooledMessage;
         try {
-            spool.addMessage(request);
+            spooledMessage = spool.addMessage(request);
             triggerSpooler();
         } catch (InterruptedException | SpoolerStoreException e) {
             logger.atDebug().log("Fail to add publish request to spooler queue", e);
             future.completeExceptionally(e);
             return future;
         }
-        return CompletableFuture.completedFuture(0);
+        return spooledMessage.getFuture();
+    }
+
+    protected void isValidPublishRequest(PublishRequest request) throws SpoolerStoreException {
+        // Payload size should be smaller than MQTT maximum message size
+        int messageSize = request.getPayload().length;
+        if (messageSize > MAXIMUM_SIZE_OF_MQTT_MESSAGE_SIZE) {
+            throw new SpoolerStoreException(String.format("The message size exceeds the maximum size of %d ",
+                    MAXIMUM_SIZE_OF_MQTT_MESSAGE_SIZE));
+        }
+
+        // Topic should not contain wildcard characters
+        String topic = request.getTopic();
+        if (topic.contains("#") || topic.contains("+")) {
+            throw new SpoolerStoreException("The topic of publish request should not contain wildcard "
+                    + "characters of '#' or '+'");
+        }
+
+        String reservedTopicTemplate = "^\\$AWS/rules/\\S+/\\S+";
+        String prefixOfReservedTopic = "^\\$AWS/rules/\\S+?/";
+        if (Pattern.matches(reservedTopicTemplate, topic)) {
+            // remove the prefix of "$AWS/rules/rule-name/"
+            topic = topic.split(prefixOfReservedTopic, 2)[1];
+        }
+
+        // Topic should not have no more than maximum number of forward slashes (/)
+        if (topic.chars().filter(num -> num == '/').count() > DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES) {
+            logger.atInfo().kv("topic", topic).log("new topic - for /");
+            String errMsg = String.format("The topic of publish request must have no"
+                    + "more than %d forward slashes (/). This excludes the first 3 slashes in the mandatory segments "
+                    + "for Basic Ingest topics ($AWS/rules/rule-name/).", DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES);
+            throw new SpoolerStoreException(errMsg);
+        }
+
+        // Check the topic size
+        if (topic.getBytes(StandardCharsets.UTF_8).length > DEFAULT_MAXIMUM_LENGTH_OF_TOPIC) {
+            logger.atInfo().kv("topic", topic).log("new topic - for size");
+            String errMsg = String.format("The topic size of publish request must be no "
+                            + "larger than {} bytes of UTF-8 encoded characters. This excludes the first "
+                            + "3 mandatory segments for Basic Ingest topics ($AWS/rules/rule-name/).",
+                    DEFAULT_MAXIMUM_LENGTH_OF_TOPIC);
+            throw new SpoolerStoreException(errMsg);
+        }
     }
 
     @SuppressWarnings({"PMD.AvoidCatchingThrowable", "PMD.PreserveStackTrace"})
@@ -458,7 +529,8 @@ public class MqttClient implements Closeable {
         long id = -1L;
         try {
             id = spool.popId();
-            PublishRequest request = spool.getMessageById(id);
+            SpoolMessage spooledMessage = spool.getMessageById(id);
+            PublishRequest request = spooledMessage.getRequest();
             MqttMessage m = new MqttMessage(request.getTopic(), request.getPayload());
 
             long finalId = id;
@@ -466,13 +538,24 @@ public class MqttClient implements Closeable {
                     .whenComplete((packetId, throwable) -> {
                         // packetId is the SDK assigned ID. Ignore this and instead use the spooler ID
                         if (throwable == null) {
+                            spooledMessage.getFuture().complete(packetId);
                             spool.removeMessageById(finalId);
                             logger.atDebug().kv("id", finalId).kv("topic", request.getTopic())
                                     .log("Successfully published message");
                         } else {
-                            spool.addId(finalId);
-                            logger.atError().log("Failed to publish the message via Spooler and will retry",
-                                    throwable);
+                            if (spooledMessage.getRetried().get()
+                                    < DEFAULT_PUBLISH_RETRIED_COUNTER) {
+                                spool.addId(finalId);
+                                logger.atError().log("Failed to publish the message via Spooler and will retry",
+                                        throwable);
+                                spooledMessage.getRetried().getAndIncrement();
+                            } else {
+                                spooledMessage.getFuture().completeExceptionally(throwable);
+                                logger.atError().log("Failed to publish the message via Spooler"
+                                                + " after retried {} times and will drop the message",
+                                        DEFAULT_PUBLISH_RETRIED_COUNTER, throwable);
+                            }
+
                         }
                     });
         } catch (Throwable t) {
