@@ -95,8 +95,9 @@ public class MqttClient implements Closeable {
     // http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718023
     static final int MAXIMUM_SIZE_OF_MQTT_MESSAGE_SIZE = 268_435_455;
     // https://docs.aws.amazon.com/general/latest/gr/iot-core.html#limits_iot
-    static final int DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES = 7;
-    static final int DEFAULT_MAXIMUM_LENGTH_OF_TOPIC = 256;
+    static final int MAX_NUMBER_OF_FORWARD_SLASHES = 7;
+    static final int MAX_LENGTH_OF_TOPIC = 256;
+    static final int IOT_MAX_LIMIT_IN_FLIGHT_QOS1_PUBLISHES = 100;
 
     // Use read lock for MQTT operations and write lock when changing the MQTT connection
     private final ReadWriteLock connectionLock = new ReentrantReadWriteLock(true);
@@ -214,9 +215,7 @@ public class MqttClient implements Closeable {
 
         mqttTopics = this.deviceConfiguration.getMQTTNamespace();
         this.builderProvider = builderProvider;
-
-        maxInFlightPublishes = Coerce.toInt(
-                mqttTopics.findOrDefault(DEFAULT_MAX_IN_FLIGHT_PUBLISHES, MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY));
+        configureMaxInFlightPublishes();
 
         eventLoopGroup = new EventLoopGroup(Coerce.toInt(mqttTopics.findOrDefault(1, MQTT_THREAD_POOL_SIZE_KEY)));
         hostResolver = new HostResolver(eventLoopGroup);
@@ -253,8 +252,7 @@ public class MqttClient implements Closeable {
                 }
 
                 if (node.childOf(DEVICE_MQTT_NAMESPACE)) {
-                    maxInFlightPublishes = Coerce.toInt(mqttTopics.findOrDefault(DEFAULT_MAX_IN_FLIGHT_PUBLISHES,
-                                    MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY));
+                    configureMaxInFlightPublishes();
                 }
 
                 // Only reconnect when the region changed if the proxy exists
@@ -309,6 +307,23 @@ public class MqttClient implements Closeable {
         this.mqttOnline.set(mqttOnline);
         this.builderProvider = builderProvider;
         this.executorService = executorService;
+    }
+
+    private void configureMaxInFlightPublishes() {
+        maxInFlightPublishes = Coerce.toInt(mqttTopics
+                .findOrDefault(DEFAULT_MAX_IN_FLIGHT_PUBLISHES,
+                        MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY));
+        if (maxInFlightPublishes > IOT_MAX_LIMIT_IN_FLIGHT_QOS1_PUBLISHES) {
+            logger.atWarn()
+                    .kv("Invalid configuration", maxInFlightPublishes)
+                    .kv("Maximum configuration allowed", IOT_MAX_LIMIT_IN_FLIGHT_QOS1_PUBLISHES)
+                    .log(String.format("The configuration of %s may hit the AWS IoT Core restricting number of "
+                                    + "unacknowledged QoS=1 publish requests per client. "
+                                    + "Will change the configuration to %d",
+                            MQTT_MAX_IN_FLIGHT_PUBLISHES_KEY, IOT_MAX_LIMIT_IN_FLIGHT_QOS1_PUBLISHES));
+
+            maxInFlightPublishes =  IOT_MAX_LIMIT_IN_FLIGHT_QOS1_PUBLISHES;
+        }
     }
 
     /**
@@ -497,29 +512,27 @@ public class MqttClient implements Closeable {
                     + "characters of '#' or '+'");
         }
 
-        String reservedTopicTemplate = "^\\$AWS/rules/\\S+/\\S+";
-        String prefixOfReservedTopic = "^\\$AWS/rules/\\S+?/";
-        if (Pattern.matches(reservedTopicTemplate, topic)) {
-            // remove the prefix of "$AWS/rules/rule-name/"
-            topic = topic.split(prefixOfReservedTopic, 2)[1];
+        String reservedTopicTemplate = "^\\$aws/rules/\\S+/\\S+";
+        String prefixOfReservedTopic = "^\\$aws/rules/\\S+?/";
+        if (Pattern.matches(reservedTopicTemplate, topic.toLowerCase())) {
+            // remove the prefix of "$aws/rules/rule-name/"
+            topic = topic.toLowerCase().split(prefixOfReservedTopic, 2)[1];
         }
 
         // Topic should not have no more than maximum number of forward slashes (/)
-        if (topic.chars().filter(num -> num == '/').count() > DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES) {
-            logger.atInfo().kv("topic", topic).log("new topic - for /");
+        if (topic.chars().filter(num -> num == '/').count() > MAX_NUMBER_OF_FORWARD_SLASHES) {
             String errMsg = String.format("The topic of publish request must have no"
                     + "more than %d forward slashes (/). This excludes the first 3 slashes in the mandatory segments "
-                    + "for Basic Ingest topics ($AWS/rules/rule-name/).", DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES);
+                    + "for Basic Ingest topics ($AWS/rules/rule-name/).", MAX_NUMBER_OF_FORWARD_SLASHES);
             throw new SpoolerStoreException(errMsg);
         }
 
         // Check the topic size
-        if (topic.getBytes(StandardCharsets.UTF_8).length > DEFAULT_MAXIMUM_LENGTH_OF_TOPIC) {
-            logger.atInfo().kv("topic", topic).log("new topic - for size");
+        if (topic.getBytes(StandardCharsets.UTF_8).length > MAX_LENGTH_OF_TOPIC) {
             String errMsg = String.format("The topic size of publish request must be no "
                             + "larger than {} bytes of UTF-8 encoded characters. This excludes the first "
                             + "3 mandatory segments for Basic Ingest topics ($AWS/rules/rule-name/).",
-                    DEFAULT_MAXIMUM_LENGTH_OF_TOPIC);
+                    MAX_LENGTH_OF_TOPIC);
             throw new SpoolerStoreException(errMsg);
         }
     }

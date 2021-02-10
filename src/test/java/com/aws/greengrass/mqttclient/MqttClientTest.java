@@ -45,8 +45,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_MQTT_NAMESPACE;
-import static com.aws.greengrass.mqttclient.MqttClient.DEFAULT_MAXIMUM_LENGTH_OF_TOPIC;
-import static com.aws.greengrass.mqttclient.MqttClient.DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES;
+import static com.aws.greengrass.mqttclient.MqttClient.MAX_LENGTH_OF_TOPIC;
+import static com.aws.greengrass.mqttclient.MqttClient.MAX_NUMBER_OF_FORWARD_SLASHES;
 import static com.aws.greengrass.mqttclient.MqttClient.DEFAULT_PUBLISH_RETRIED_COUNTER;
 import static com.aws.greengrass.mqttclient.MqttClient.MAXIMUM_SIZE_OF_MQTT_MESSAGE_SIZE;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
@@ -661,7 +661,7 @@ class MqttClientTest {
     @Test
     void GIVEN_unreserved_topic_have_more_slashes_than_limit_WHEN_publish_THEN_future_complete_exceptionally() throws SpoolerStoreException, InterruptedException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("/", Collections.nCopies(DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES + 2, "a"));
+        String topic = String.join("/", Collections.nCopies(MAX_NUMBER_OF_FORWARD_SLASHES + 2, "a"));
         PublishRequest request = PublishRequest.builder().topic(topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
@@ -676,7 +676,7 @@ class MqttClientTest {
     @Test
     void GIVEN_reserved_topic_including_prefix_have_slashes_have_slashes_equal_to_limit_WHEN_publish_THEN_future_complete() throws SpoolerStoreException, InterruptedException, ExecutionException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("/", Collections.nCopies(DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES, "a"));
+        String topic = String.join("/", Collections.nCopies(MAX_NUMBER_OF_FORWARD_SLASHES, "a"));
         PublishRequest request = PublishRequest.builder().topic(reservedTopicPrefix + topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
@@ -695,7 +695,7 @@ class MqttClientTest {
     @Test
     void GIVEN_reserved_topic_excluding_prefix_have_more_slashes_than_limit_WHEN_publish_THEN_future_complete_exceptionally() throws SpoolerStoreException, InterruptedException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("/", Collections.nCopies(DEFAULT_MAXIMUM_NUMBER_OF_FORWARD_SLASHES + 2, "a"));
+        String topic = String.join("/", Collections.nCopies(MAX_NUMBER_OF_FORWARD_SLASHES + 2, "a"));
         PublishRequest request = PublishRequest.builder().topic(reservedTopicPrefix + topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
@@ -710,7 +710,7 @@ class MqttClientTest {
     @Test
     void GIVEN_unreserved_topic_exceeds_topic_size_limit_WHEN_publish_THEN_future_complete_exceptionally() throws SpoolerStoreException, InterruptedException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("", Collections.nCopies(DEFAULT_MAXIMUM_LENGTH_OF_TOPIC + 1, "a"));
+        String topic = String.join("", Collections.nCopies(MAX_LENGTH_OF_TOPIC + 1, "a"));
         PublishRequest request = PublishRequest.builder().topic(topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
@@ -725,7 +725,7 @@ class MqttClientTest {
     @Test
     void GIVEN_reserved_topic_including_prefix_equal_to_topic_size_limit_WHEN_publish_THEN_future_complete() throws SpoolerStoreException, InterruptedException, ExecutionException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("", Collections.nCopies(DEFAULT_MAXIMUM_LENGTH_OF_TOPIC, "a"));
+        String topic = String.join("", Collections.nCopies(MAX_LENGTH_OF_TOPIC, "a"));
         PublishRequest request = PublishRequest.builder().topic(reservedTopicPrefix + topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
@@ -744,7 +744,7 @@ class MqttClientTest {
     @Test
     void GIVEN_reserved_topic_excluding_prefix_exceeds_topic_size_limit_WHEN_publish_THEN_future_complete_exceptionally() throws SpoolerStoreException, InterruptedException {
         MqttClient client = spy(new MqttClient(deviceConfiguration, spool, false, (c) -> builder, executorService));
-        String topic = String.join("", Collections.nCopies(DEFAULT_MAXIMUM_LENGTH_OF_TOPIC + 1, "a"));
+        String topic = String.join("", Collections.nCopies(MAX_LENGTH_OF_TOPIC + 1, "a"));
         PublishRequest request = PublishRequest.builder().topic(reservedTopicPrefix + topic)
                 .payload(new byte[1])
                 .qos(QualityOfService.AT_LEAST_ONCE).build();
