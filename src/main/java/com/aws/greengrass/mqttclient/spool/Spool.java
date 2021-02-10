@@ -146,10 +146,18 @@ public class Spool {
     public long popId() throws InterruptedException {
         SpoolMessage message;
         long id;
-        do {
+        while (true) {
             id = queueOfMessageId.takeFirst();
             message = getMessageById(id);
-        } while (message == null);
+            if (message == null) {
+                continue;
+            }
+            if (message.getFuture().isDone()) {
+                removeMessageById(id);
+            } else {
+                break;
+            }
+        }
         return id;
     }
 

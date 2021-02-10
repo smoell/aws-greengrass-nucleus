@@ -556,12 +556,11 @@ public class MqttClient implements Closeable {
                             logger.atDebug().kv("id", finalId).kv("topic", request.getTopic())
                                     .log("Successfully published message");
                         } else {
-                            if (spooledMessage.getRetried().get()
+                            if (spooledMessage.getRetried().getAndIncrement()
                                     < DEFAULT_PUBLISH_RETRIED_COUNTER) {
                                 spool.addId(finalId);
                                 logger.atError().log("Failed to publish the message via Spooler and will retry",
                                         throwable);
-                                spooledMessage.getRetried().getAndIncrement();
                             } else {
                                 spooledMessage.getFuture().completeExceptionally(throwable);
                                 logger.atError().log("Failed to publish the message via Spooler"
