@@ -70,8 +70,10 @@ import static com.aws.greengrass.dependency.EZPlugins.JAR_FILE_EXTENSION;
 import static com.aws.greengrass.deployment.bootstrap.BootstrapSuccessCode.REQUEST_RESTART;
 import static com.aws.greengrass.deployment.model.Deployment.DeploymentStage.DEFAULT;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
+import static com.github.grantwest.eventually.EventuallyLambdaMatcher.eventuallyEval;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -135,10 +137,12 @@ class PluginComponentTest extends BaseITCase {
     @Test
     void GIVEN_kernel_WHEN_locate_plugin_without_digest_THEN_plugin_is_not_loaded_into_JVM(ExtensionContext context)
             throws Exception {
-        ignoreExceptionOfType(context, RuntimeException.class);
+        ignoreExceptionOfType(context, ServiceLoadException.class);
         ConfigPlatformResolver.initKernelWithMultiPlatformConfig(kernel, this.getClass().getResource("plugin.yaml"));
         setupPackageStore();
-        assertThrows(RuntimeException.class, () -> kernel.launch());
+        kernel.launch();
+        GreengrassService eg = kernel.locate("plugin");
+        assertThat(eg::getState, eventuallyEval(is(State.BROKEN)));
     }
 
     @Test
